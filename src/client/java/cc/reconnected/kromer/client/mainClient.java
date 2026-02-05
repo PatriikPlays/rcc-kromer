@@ -22,15 +22,15 @@ import net.minecraft.commands.synchronization.SingletonArgumentInfo;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import ovh.sad.jkromer.models.Transaction;
+import org.jetbrains.annotations.Nullable;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class mainClient implements ClientModInitializer {
-    private final AtomicReference<BigDecimal> balance = new AtomicReference<>(BigDecimal.valueOf(-1f));
+    private final AtomicReference<Optional<BigDecimal>> balance = new AtomicReference<>(Optional.empty());
 
     @Override
     public void onInitializeClient() {
@@ -48,26 +48,51 @@ public class mainClient implements ClientModInitializer {
         AutoConfig.register(KromerClientConfig.class, GsonConfigSerializer::new);
         ConfigHolder<KromerClientConfig> config = AutoConfig.getConfigHolder(KromerClientConfig.class);
 
-        ClientPlayConnectionEvents.JOIN.register((packetListener, sender, client) -> ClientPlayNetworking.send(BalanceRequestPacket.ID, new FriendlyByteBuf(Unpooled.buffer())));
+        ClientPlayConnectionEvents.JOIN.register((packetListener, sender, client) -> {
+            ClientPlayNetworking.send(BalanceRequestPacket.ID, new FriendlyByteBuf(Unpooled.buffer()));
+        });
 
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            balance.set(Optional.empty());
+        });
 
         ClientPlayNetworking.registerGlobalReceiver(TransactionPacket.ID, (client, handler, buf, responseSender) -> {
-            Transaction tx = TransactionPacket.readTransaction(buf);
-            BigDecimal decimal = new BigDecimal(buf.readUtf())
-                    .setScale(2, RoundingMode.HALF_EVEN);
-
-            if (Objects.equals(decimal.toString(), "-1")) {
-                balance.set(decimal);
+            TransactionPacket.TransactionWithBalance tx;
+            try {
+                tx = TransactionPacket.deserialize(buf);
+            } catch (Exception e) {
+                Kromer.LOGGER.error("Failed to deserialize incoming transaction packet:", e);
+                return;
             }
+
+            @Nullable
+            BigDecimal balance = tx.balance();
+
+            if (balance != null) {
+                this.balance.set(Optional.of(balance));
+            }
+
             if(client.getToasts().queued.size() < 3 && config.getConfig().toastPopup) {
+                var toastContents = "Incoming " + tx.transaction().value + "KRO from " + tx.transaction().from + "! ";
+
+                if (tx.balance() != null) {
+                    toastContents += ("Balance is now " + balance.setScale(2, RoundingMode.DOWN) + "KRO.");
+                }
+
                 client.getToasts().addToast(SystemToast.multiline(client, SystemToast.SystemToastIds.TUTORIAL_HINT,
                         Component.literal("Transaction"),
-                        Component.literal("Incoming " + tx.value + "KRO from " + tx.from + "! Balance is now " + decimal + "KRO.")));
+                        Component.literal(toastContents)));
             }
         });
 
-        ClientPlayNetworking.registerGlobalReceiver(BalanceResponsePacket.ID, (client, handler, buf, responseSender) -> balance.set(new BigDecimal(buf.readUtf())
-                .setScale(2, RoundingMode.HALF_EVEN)));
+        ClientPlayNetworking.registerGlobalReceiver(BalanceResponsePacket.ID, (client, handler, buf, responseSender) -> {
+            try {
+                balance.set(Optional.of(BalanceResponsePacket.deserialize(buf)));
+            } catch (Exception e) {
+                Kromer.LOGGER.error("Failed to deserialize incoming balance response packet:", e);
+                return;
+            }
+        });
 
         ScreenEvents.AFTER_INIT.register((mc, screen, sw, sh) -> {
             if (screen instanceof PauseScreen) {
@@ -80,18 +105,15 @@ public class mainClient implements ClientModInitializer {
                     if(config.getConfig().balanceDisplay) {
                         int x = 10;
                         int y = 10;
+                        int valueX = x + mc.font.width("Balance: ");
 
                         guiGraphics.drawString(mc.font, "Balance: ", x, y, 0x55FF55, true);
-                        x += mc.font.width("Balance: ");
 
-                        BigDecimal bal = balance.get();
-                        if (Objects.equals(bal.toString(), "-1.0")) {
-                            guiGraphics.drawString(mc.font, "Loading...", x, y, 0xAAAAAA, true);
-                        } else if (Objects.equals(bal.toString(), "-2.0")) {
-                            guiGraphics.drawString(mc.font, "Error!", x, y, 0xAA0000, true);
-                        } else {
-                            guiGraphics.drawString(mc.font, bal + "KRO", x, y, 0x00AA00, true);
-                        }
+                        balance.get().ifPresentOrElse(bal -> {
+                            guiGraphics.drawString(mc.font, bal.setScale(2, RoundingMode.DOWN) + "KRO", valueX, y, 0x00AA00, true);
+                        }, () -> {
+                            guiGraphics.drawString(mc.font, "Loading..", valueX, y, 0xAAAAAA, true);
+                        });
                     }
                 });
             }

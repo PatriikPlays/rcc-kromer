@@ -142,35 +142,11 @@ public class Kromer implements DedicatedServerModInitializer {
             WelfareData.class,
             WelfareData::new
         );
-        ServerPlayNetworking.registerGlobalReceiver(BalanceRequestPacket.ID, (server, player, handler, buf, responseSender) -> server.execute(() -> {
-            Wallet wallet = database.getWallet(player.getUUID());
-            if(wallet == null) {
-                LOGGER.error("BalanceRequestPacket: user " + player.getUUID().toString() + " has no valid wallet.");
-                return;
-            }
 
-            AtomicReference<BigDecimal> balance = new AtomicReference<>(balanceCache.get(wallet.address));
+        ServerPlayNetworking.registerGlobalReceiver(BalanceRequestPacket.ID, (server, player, handler, buf, responseSender) -> {
+            sendBalanceResponse(server, player);
+        });
 
-            if(balance.get() == null) {
-                CompletableFuture
-                        .supplyAsync(() -> GetAddress.execute(wallet.address), NETWORK_EXECUTOR)
-                        .thenCompose(future -> future)
-                        .whenComplete((b, ex) -> {
-                            if (ex != null) {
-                                LOGGER.error("BalanceRequestPacket: for user " + player.getUUID().toString() + " failed balance retrival due to " + ex.getMessage());
-                                return;
-                            }
-
-                            if (b instanceof Result.Ok<GetAddress.GetAddressBody> ok) {
-                                balance.set(ok.value().address.balance);
-                                balanceCache.put(wallet.address, ok.value().address.balance);
-                                ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(ok.value().address.balance));
-                            }
-                        });
-            } else {
-                ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(balance.get()));
-            }
-        }));
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             try {
                 connectWebsocket(server);
@@ -287,7 +263,7 @@ public class Kromer implements DedicatedServerModInitializer {
         client.server
             .getPlayerList()
             .getPlayers()
-            .forEach(p -> executeWelfareForPlayer(p,finalWelfare));
+            .forEach(p -> executeWelfareForPlayer(p, finalWelfare));
     }
     private static void executeWelfareForPlayer(ServerPlayer player, BigDecimal baseWelfare) {
         if (baseWelfare.equals(BigDecimal.valueOf(0))) {
@@ -334,7 +310,7 @@ public class Kromer implements DedicatedServerModInitializer {
 
                         if (b instanceof Result.Ok<GiveMoney.GiveMoneyResponse> ok) {
                             balanceCache.put(wallet.address, ok.value().wallet.balance);
-                            ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(ok.value().wallet.balance));
+                            ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialize(ok.value().wallet.balance));
                             welfareData.oldActiveTime = activeTime;
                         }
                     });
@@ -363,14 +339,13 @@ public class Kromer implements DedicatedServerModInitializer {
         Transaction transaction
     ) {
         BigDecimal balVal = Kromer.balanceCache.get(transaction.to);
-        if(balanceCache == null) {
-            balVal = BigDecimal.valueOf(-1f);
-        } else {
+
+        if(balVal != null) {
             balVal = balVal.add(transaction.value);
             Kromer.balanceCache.put(transaction.to, balVal);
         }
 
-        ServerPlayNetworking.send(player, TransactionPacket.ID, TransactionPacket.serialise(transaction, balVal));
+        ServerPlayNetworking.send(player, TransactionPacket.ID, TransactionPacket.serialize(transaction, balVal));
 
         var commonMeta = CommonMeta.fromString(transaction.metadata);
 
@@ -392,6 +367,43 @@ public class Kromer implements DedicatedServerModInitializer {
                     )
             );
         }
+    }
+
+    public static void sendBalanceResponse(MinecraftServer server, ServerPlayer player) {
+        server.execute(() -> {
+            Wallet wallet = database.getWallet(player.getUUID());
+            if(wallet == null) {
+                LOGGER.error("BalanceRequestPacket: user " + player.getUUID().toString() + " has no valid wallet.");
+                return;
+            }
+
+            AtomicReference<BigDecimal> balance = new AtomicReference<>(balanceCache.get(wallet.address));
+            if(balance.get() == null) {
+                CompletableFuture
+                        .supplyAsync(() -> GetAddress.execute(wallet.address), NETWORK_EXECUTOR)
+                        .thenCompose(future -> future)
+                        .whenComplete((b, ex) -> {
+                            if (ex != null) {
+                                LOGGER.error("BalanceRequestPacket: for user " + player.getUUID().toString() + " failed balance retrival due to " + ex.getMessage());
+                                return;
+                            }
+
+                            if (b instanceof Result.Ok<GetAddress.GetAddressBody> ok) {
+                                balance.set(ok.value().address.balance);
+                                balanceCache.put(wallet.address, ok.value().address.balance);
+
+                                server.execute(() -> {
+                                    ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialize(balance.get()));
+                                });
+                            } else if (b instanceof Result.Err<GetAddress.GetAddressBody> err) {
+                                LOGGER.error("BalanceRequestPacket: for user " + player.getUUID().toString() + " failed balance retrival due to " + err.toString());
+                                return;
+                            }
+                        });
+            } else {
+                ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialize(balance.get()));
+            }
+        });
     }
 
     public static void checkTransfers(ServerPlayer player) {

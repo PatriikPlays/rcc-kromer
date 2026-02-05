@@ -59,10 +59,10 @@ public class Locale {
             "<gray>Thanks for playing! You've been given your welfare of %.2fKRO!"
         ),
         NOTIFY_TRANSFER(
-            "<green>You have been sent <dark_green>%.2fKRO</dark_green>, from <dark_green>%s</dark_green>."
+            "<green>You have been sent <dark_green>%.2fKRO</dark_green> from <dark_green>%s</dark_green>."
         ),
         NOTIFY_TRANSFER_MESSAGE(
-            "<green>You have been sent <dark_green>%.2fKRO</dark_green>, from <dark_green>%s</dark_green>, with message: \"%s\"."
+            "<green>You have been sent <dark_green>%.2fKRO</dark_green> from <dark_green>%s</dark_green>, with message: \"%s\"."
         ),
         OUTGOING_NOT_SEEN(
             "<red>From your account, <dark_red>%.2fKRO</dark_red>, has been sent to <dark_red>%s</dark_red>. Executed at: %s.</red>"

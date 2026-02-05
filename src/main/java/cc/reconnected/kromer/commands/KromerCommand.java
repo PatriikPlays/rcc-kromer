@@ -127,7 +127,7 @@ public class KromerCommand {
                                                 }
                                                 if (b instanceof Result.Ok<GiveMoney.GiveMoneyResponse> ok) {
                                                     balanceCache.put(ok.value().wallet.address, ok.value().wallet.balance);
-                                                    ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(ok.value().wallet.balance));
+                                                    ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialize(ok.value().wallet.balance));
 
                                                     context.getSource().getServer().execute(() ->
                                                             context.getSource().sendSuccess(

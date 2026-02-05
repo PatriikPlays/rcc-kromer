@@ -2,6 +2,7 @@ package cc.reconnected.kromer.networking;
 
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
+import org.jetbrains.annotations.Nullable;
 import ovh.sad.jkromer.models.Transaction;
 
 import java.math.BigDecimal;
@@ -11,13 +12,32 @@ import java.util.Objects;
 public class TransactionPacket {
     public static final ResourceLocation ID = new ResourceLocation("rcc-kromer", "transaction");
 
-    public static FriendlyByteBuf serialise(Transaction tx, BigDecimal balance) {
+    public static FriendlyByteBuf serialize(Transaction tx, @Nullable BigDecimal balance) {
         FriendlyByteBuf buf = new FriendlyByteBuf(io.netty.buffer.Unpooled.buffer());
         writeTransaction(buf, tx);
-        buf.writeUtf(balance.toString());
+        buf.writeBoolean(balance != null);
+        if (balance != null) {
+            buf.writeUtf(balance.toString());
+        }
         return buf;
     }
-    public static void writeTransaction(FriendlyByteBuf buf, Transaction tx) {
+
+    public record TransactionWithBalance(Transaction transaction, @Nullable BigDecimal balance) {}
+    public static TransactionWithBalance deserialize(FriendlyByteBuf buf) throws Exception {
+        Transaction tx = readTransaction(buf);
+
+        boolean hasBalance = buf.readBoolean();
+
+        BigDecimal balance = null;
+
+        if (hasBalance) {
+             balance = new BigDecimal(buf.readUtf());
+        }
+
+        return new TransactionWithBalance(tx, balance);
+    }
+
+    private static void writeTransaction(FriendlyByteBuf buf, Transaction tx) {
         buf.writeUtf(Objects.requireNonNullElse(tx.sent_metaname, ""));
         buf.writeInt(tx.id);
         buf.writeUtf(tx.from);
@@ -30,7 +50,7 @@ public class TransactionPacket {
         buf.writeUtf(tx.type);
     }
 
-    public static Transaction readTransaction(FriendlyByteBuf buf) {
+    private static Transaction readTransaction(FriendlyByteBuf buf) {
         String sent_metaname = buf.readUtf();
         int id = buf.readInt();
         String from = buf.readUtf();

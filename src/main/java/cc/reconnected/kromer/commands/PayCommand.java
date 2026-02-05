@@ -22,7 +22,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-
+import java.util.stream.Collectors;
+import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -92,26 +93,37 @@ public class PayCommand {
         CompletableFuture
                 .supplyAsync(() -> MakeTransaction.execute(wallet.privatekey, payment.to, payment.amount, payment.metadata), NETWORK_EXECUTOR)
                 .thenCompose(future -> future)  // unwrap nested CompletableFuture<Result<...>>
-                .whenComplete((result, ex) -> context.getSource().getServer().execute(() -> {
-                    if (ex != null) {
-                        context.getSource().sendSuccess(
-                                () -> Locale.use(Locale.Messages.ERROR, ex.getMessage()),
-                                false
-                        );
-                        return;
-                    }
-                    if (result instanceof Result.Ok<MakeTransaction.MakeTransactionResponse> ok) {
-                        context.getSource().sendSuccess(
-                                () -> Locale.use(Locale.Messages.PAYMENT_CONFIRMED, payment.amount, payment.to),
-                                false
-                        );
-                    } else if (result instanceof Result.Err<MakeTransaction.MakeTransactionResponse> err) {
-                        context.getSource().sendSuccess(
-                                () -> Locale.use(Locale.Messages.ERROR, err.error()),
-                                false
-                        );
-                    }
-                }));
+                .whenComplete((result, ex) -> {
+                    context.getSource().getServer().execute(() -> {
+                        if (ex != null) {
+                            context.getSource().sendSuccess(
+                                    () -> Locale.use(Locale.Messages.ERROR, ex.getMessage()),
+                                    false
+                            );
+                            return;
+                        }
+                        if (result instanceof Result.Ok<MakeTransaction.MakeTransactionResponse> ok) {
+                            if (Kromer.balanceCache.get(wallet.address) != null) {
+                                Kromer.balanceCache.put(
+                                        wallet.address,
+                                        Kromer.balanceCache.get(wallet.address).subtract(payment.amount)
+                                );
+                            }
+
+                            Kromer.sendBalanceResponse(context.getSource().getServer(), player);
+
+                            context.getSource().sendSuccess(
+                                    () -> Locale.use(Locale.Messages.PAYMENT_CONFIRMED, payment.amount, payment.to),
+                                    false
+                            );
+                        } else if (result instanceof Result.Err<MakeTransaction.MakeTransactionResponse> err) {
+                            context.getSource().sendSuccess(
+                                    () -> Locale.use(Locale.Messages.ERROR, err.error()),
+                                    false
+                            );
+                        }
+                    });
+                });
 
 
         return 1;
@@ -156,10 +168,9 @@ public class PayCommand {
                                 .getSource()
                                 .getServer()
                                 .getProfileCache())
-                    .get(recipientInput)
-                    .orElse(null);
-            } catch (Exception ignored) {
-            }
+                                .get(recipientInput)
+                                .orElse(null);
+            } catch (Exception ignored) {}
 
             if (otherProfile == null) {
                 context
