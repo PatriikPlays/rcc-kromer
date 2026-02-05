@@ -1,5 +1,6 @@
 package cc.reconnected.kromer.networking;
 
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
@@ -13,8 +14,10 @@ public class TransactionPacket {
     public static final ResourceLocation ID = new ResourceLocation("rcc-kromer", "transaction");
 
     public static FriendlyByteBuf serialize(Transaction tx, @Nullable BigDecimal balance) {
-        FriendlyByteBuf buf = new FriendlyByteBuf(io.netty.buffer.Unpooled.buffer());
+        FriendlyByteBuf buf = PacketByteBufs.create();
+
         writeTransaction(buf, tx);
+
         buf.writeBoolean(balance != null);
         if (balance != null) {
             buf.writeUtf(balance.toString());

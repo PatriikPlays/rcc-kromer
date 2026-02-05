@@ -7,7 +7,6 @@ import cc.reconnected.kromer.arguments.KromerArgumentType;
 import cc.reconnected.kromer.networking.BalanceRequestPacket;
 import cc.reconnected.kromer.networking.BalanceResponsePacket;
 import cc.reconnected.kromer.networking.TransactionPacket;
-import io.netty.buffer.Unpooled;
 import me.shedaniel.autoconfig.AutoConfig;
 import me.shedaniel.autoconfig.ConfigHolder;
 import me.shedaniel.autoconfig.serializer.GsonConfigSerializer;
@@ -17,12 +16,11 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.command.v2.ArgumentTypeRegistry;
+import net.fabricmc.fabric.api.networking.v1.PacketByteBufs;
 import net.minecraft.client.gui.GuiGraphics;
-import net.minecraft.client.gui.components.PlayerTabOverlay;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.commands.synchronization.SingletonArgumentInfo;
-import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import org.jetbrains.annotations.Nullable;
@@ -52,7 +50,7 @@ public class mainClient implements ClientModInitializer {
         ConfigHolder<KromerClientConfig> config = AutoConfig.getConfigHolder(KromerClientConfig.class);
 
         ClientPlayConnectionEvents.JOIN.register((packetListener, sender, client) -> {
-            ClientPlayNetworking.send(BalanceRequestPacket.ID, new FriendlyByteBuf(Unpooled.buffer()));
+            ClientPlayNetworking.send(BalanceRequestPacket.ID, PacketByteBufs.empty());
         });
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
@@ -78,7 +76,7 @@ public class mainClient implements ClientModInitializer {
             if(client.getToasts().queued.size() < 3 && config.getConfig().toastPopup) {
                 var toastContents = "Incoming " + tx.transaction().value + "KRO from " + tx.transaction().from + "! ";
 
-                if (tx.balance() != null) {
+                if (balance != null) {
                     toastContents += ("Balance is now " + balance.setScale(2, RoundingMode.DOWN) + "KRO.");
                 }
 
