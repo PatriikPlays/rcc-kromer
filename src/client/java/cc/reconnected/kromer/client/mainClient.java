@@ -14,8 +14,11 @@ import me.shedaniel.autoconfig.serializer.GsonConfigSerializer;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.command.v2.ArgumentTypeRegistry;
+import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.PlayerTabOverlay;
 import net.minecraft.client.gui.components.toasts.SystemToast;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.commands.synchronization.SingletonArgumentInfo;
@@ -98,25 +101,41 @@ public class mainClient implements ClientModInitializer {
             if (screen instanceof PauseScreen) {
                 ScreenEvents.afterRender(screen).register((scr, guiGraphics, mouseX, mouseY, tickDelta) -> {
                     // if singleplayer, return
-                    if (mc.isLocalServer()) {
+                    if (mc.isLocalServer() || !config.getConfig().balanceDisplay) {
                         return;
                     }
 
-                    if(config.getConfig().balanceDisplay) {
-                        int x = 10;
-                        int y = 10;
-                        int valueX = x + mc.font.width("Balance: ");
-
-                        guiGraphics.drawString(mc.font, "Balance: ", x, y, 0x55FF55, true);
-
-                        balance.get().ifPresentOrElse(bal -> {
-                            guiGraphics.drawString(mc.font, bal.setScale(2, RoundingMode.DOWN) + "KRO", valueX, y, 0x00AA00, true);
-                        }, () -> {
-                            guiGraphics.drawString(mc.font, "Loading..", valueX, y, 0xAAAAAA, true);
-                        });
-                    }
+                    renderBalanceDisplay(guiGraphics);
                 });
             }
+        });
+
+        HudRenderCallback.EVENT.register((guiGraphics, tickDelta) -> {
+            var mc = net.minecraft.client.Minecraft.getInstance();
+
+            if (mc.isLocalServer() || !config.getConfig().balanceDisplay) {
+                return;
+            }
+
+            if (mc.options.keyPlayerList.isDown() && mc.player != null) {
+                renderBalanceDisplay(guiGraphics);
+            }
+        });
+    }
+
+    private void renderBalanceDisplay(GuiGraphics guiGraphics) {
+        var mc = net.minecraft.client.Minecraft.getInstance();
+
+        int x = 10;
+        int y = 10;
+        int valueX = x + mc.font.width("Balance: ");
+
+        guiGraphics.drawString(mc.font, "Balance: ", x, y, 0x55FF55, true);
+
+        balance.get().ifPresentOrElse(bal -> {
+            guiGraphics.drawString(mc.font, bal.setScale(2, RoundingMode.DOWN) + "KRO", valueX, y, 0x00AA00, true);
+        }, () -> {
+            guiGraphics.drawString(mc.font, "Loading..", valueX, y, 0xAAAAAA, true);
         });
     }
 }
