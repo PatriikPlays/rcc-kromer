@@ -36,6 +36,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.Optional;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.typesafe.config.*;
@@ -77,6 +78,7 @@ public class Kromer implements DedicatedServerModInitializer {
 
     public static Boolean kromerStatus = false;
     public static int welfareQueued = 0;
+    public static AtomicBoolean welfareRunning = new AtomicBoolean(false);
     public static ConcurrentLRUCache<String, BigDecimal> balanceCache = new ConcurrentLRUCache<>(500); // 500 is arbitary
 
     private static Kromer instance = null;
@@ -142,11 +144,35 @@ public class Kromer implements DedicatedServerModInitializer {
             WelfareData.class,
             WelfareData::new
         );
+        ServerPlayNetworking.registerGlobalReceiver(BalanceRequestPacket.ID, (server, player, handler, buf, responseSender) -> server.execute(() -> {
+            Wallet wallet = database.getWallet(player.getUUID());
+            if(wallet == null) {
+                LOGGER.error("BalanceRequestPacket: user " + player.getUUID().toString() + " has no valid wallet.");
+                return;
+            }
 
-        ServerPlayNetworking.registerGlobalReceiver(BalanceRequestPacket.ID, (server, player, handler, buf, responseSender) -> {
-            sendBalanceResponse(server, player);
-        });
+            AtomicReference<BigDecimal> balance = new AtomicReference<>(balanceCache.get(wallet.address));
 
+            if(balance.get() == null) {
+                CompletableFuture
+                        .supplyAsync(() -> GetAddress.execute(wallet.address), NETWORK_EXECUTOR)
+                        .thenCompose(future -> future)
+                        .whenComplete((b, ex) -> {
+                            if (ex != null) {
+                                LOGGER.error("BalanceRequestPacket: for user " + player.getUUID().toString() + " failed balance retrival due to " + ex.getMessage());
+                                return;
+                            }
+
+                            if (b instanceof Result.Ok<GetAddress.GetAddressBody> ok) {
+                                balance.set(ok.value().address.balance);
+                                balanceCache.put(wallet.address, ok.value().address.balance);
+                                ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(ok.value().address.balance));
+                            }
+                        });
+            } else {
+                ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(balance.get()));
+            }
+        }));
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             try {
                 connectWebsocket(server);
@@ -203,19 +229,23 @@ public class Kromer implements DedicatedServerModInitializer {
         jKromer.endpoint = jKromer.endpoint_raw + "/api/krist";
 
         long initialDelay = getDelayUntilNextHourInSeconds();
-        long oneHour = 3600; // seconds
-        scheduler.scheduleAtFixedRate(
-            () -> {
-                if (!Kromer.kromerStatus) {
-                    welfareQueued++;
-                    return;
-                }
-                Kromer.executeWelfare();
-            },
-            initialDelay,
-            oneHour,
-            TimeUnit.SECONDS
-        );
+        long period = 3600; // one hour in seconds
+        if (welfareRunning.getAndSet(true)) {
+            scheduler.scheduleAtFixedRate(
+                    () -> {
+                        if (!Kromer.kromerStatus) {
+                            welfareQueued++;
+                            return;
+                        }
+                        Kromer.executeWelfare();
+                    },
+                    initialDelay,
+                    period,
+                    TimeUnit.SECONDS
+            );
+        } else {
+            LOGGER.warn("Failed to start welfare scheduler, it is already running.");
+        }
     }
 
     private static BigDecimal calculateWelfare(){
@@ -263,7 +293,7 @@ public class Kromer implements DedicatedServerModInitializer {
         client.server
             .getPlayerList()
             .getPlayers()
-            .forEach(p -> executeWelfareForPlayer(p, finalWelfare));
+            .forEach(p -> executeWelfareForPlayer(p,finalWelfare));
     }
     private static void executeWelfareForPlayer(ServerPlayer player, BigDecimal baseWelfare) {
         if (baseWelfare.equals(BigDecimal.valueOf(0))) {
@@ -310,7 +340,7 @@ public class Kromer implements DedicatedServerModInitializer {
 
                         if (b instanceof Result.Ok<GiveMoney.GiveMoneyResponse> ok) {
                             balanceCache.put(wallet.address, ok.value().wallet.balance);
-                            ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialize(ok.value().wallet.balance));
+                            ServerPlayNetworking.send(player, BalanceResponsePacket.ID, BalanceResponsePacket.serialise(ok.value().wallet.balance));
                             welfareData.oldActiveTime = activeTime;
                         }
                     });
@@ -339,17 +369,30 @@ public class Kromer implements DedicatedServerModInitializer {
         Transaction transaction
     ) {
         BigDecimal balVal = Kromer.balanceCache.get(transaction.to);
-
-        if(balVal != null) {
-            balVal = balVal.add(transaction.value);
-            Kromer.balanceCache.put(transaction.to, balVal);
+        if(balanceCache == null) {
+            balVal = BigDecimal.valueOf(-1f);
+        } else {
+            if(balVal == null) {
+                balVal = BigDecimal.valueOf(-1f);
+            } else {
+                balVal = balVal.add(transaction.value);
+                Kromer.balanceCache.put(transaction.to, balVal);
+            }
         }
 
-        ServerPlayNetworking.send(player, TransactionPacket.ID, TransactionPacket.serialize(transaction, balVal));
+        ServerPlayNetworking.send(player, TransactionPacket.ID, TransactionPacket.serialise(transaction, balVal));
 
         var commonMeta = CommonMeta.fromString(transaction.metadata);
-
-        if (commonMeta.keywordEntries.containsKey("message")) {
+        if(commonMeta.keywordEntries.containsKey("error")) {
+            player.sendSystemMessage(
+                    Locale.useSafe(
+                            Locale.Messages.NOTIFY_TRANSFER_MESSAGE_ERROR,
+                            transaction.value,
+                            getNameFromWallet(transaction.from),
+                            commonMeta.keywordEntries.get("error")
+                    )
+            );
+        } else if (commonMeta.keywordEntries.containsKey("message")) {
             player.sendSystemMessage(
                     Locale.useSafe( // use useSafe, removes all <click's and whatnot.
                             Locale.Messages.NOTIFY_TRANSFER_MESSAGE,
